@@ -23,6 +23,7 @@ Supports the following code forges:
   - [Pre-built Binaries](#pre-built-binaries)
   - [Attestations](#attestations)
   - [Alias Setup](#alias-setup)
+  - [Shell Completions](#shell-completions)
 - [Quick Start](#quick-start)
 - [Commands](#commands)
 
@@ -142,6 +143,56 @@ You can set up a `jj` alias to make it easier to use `jj-vine`. Aliases that wor
 jj config set --user aliases.pr '["util", "exec", "--", "jj-vine"]'
 jj config set --user aliases.mr '["util", "exec", "--", "jj-vine"]'
 jj config set --user aliases.vine '["util", "exec", "--", "jj-vine"]'
+```
+
+### Shell Completions{#shell-completions}
+
+`jj-vine` can generate completion scripts for Bash, Zsh, Fish, PowerShell, and Elvish. The generated scripts are self-contained and do not require any additional tools at completion time.
+
+If you omit the shell, `jj-vine` uses the shell in `$SHELL`:
+
+```bash
+jj-vine completions | source
+```
+
+You can load completions into your current shell session without writing a file:
+
+```bash
+# Fish
+jj-vine completions fish | source
+
+# Zsh
+eval "$(jj-vine completions zsh)"
+
+# Bash
+eval "$(jj-vine completions bash)"
+
+# PowerShell (add to your $PROFILE)
+jj-vine completions powershell | Out-String | Invoke-Expression
+
+# Elvish
+eval (jj-vine completions elvish | slurp)
+```
+
+Note that piping into the shell itself (e.g. `jj-vine completions fish | fish`) runs the script in a new shell process, so it will not affect your current session.
+
+To install completions permanently:
+
+```bash
+# Bash
+jj-vine completions bash > ~/.local/share/bash-completion/completions/jj-vine
+
+# Zsh (make sure the directory is in your `$fpath`)
+jj-vine completions zsh > "${fpath[1]}/_jj-vine"
+
+# Fish
+jj-vine completions fish > ~/.config/fish/completions/jj-vine.fish
+
+# PowerShell
+jj-vine completions powershell > jj-vine.ps1
+
+# Elvish
+jj-vine completions elvish > ~/.config/elvish/lib/jj-vine.elv
 ```
 
 ## Quick Start{#quick-start}

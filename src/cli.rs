@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Args, CommandFactory as _, Parser, Subcommand};
+use clap_complete::Shell;
 use tracing::{Dispatch, Level, dispatcher};
 use tracing_subscriber::{
     EnvFilter,
@@ -11,7 +12,7 @@ use tracing_subscriber::{
 
 use crate::{
     commands::{status::StatusCommandConfig, submit::SubmitCommandConfig},
-    error::Result,
+    error::{Error, Result},
     output::{BufferedOutput, FlatOutput, InteractiveOutput, SyncOutput},
     tracing_formatter::PlainFormatter,
 };
@@ -42,6 +43,43 @@ pub enum Commands {
 
     /// Show status of tracked bookmarks and their MRs/PRs.
     Status(StatusCommandConfig),
+
+    /// Generate shell completion scripts.
+    Completions(CompletionsCommandConfig),
+}
+
+#[derive(Args)]
+pub struct CompletionsCommandConfig {
+    /// The shell to generate completions for (defaults to `$SHELL`).
+    #[arg(value_enum)]
+    pub shell: Option<Shell>,
+}
+
+impl CompletionsCommandConfig {
+    fn shell(&self) -> Result<Shell> {
+        self.shell.or_else(Shell::from_env).ok_or_else(|| {
+            Error::new(
+                "Could not determine the current shell from $SHELL. \
+                 Specify one of: bash, elvish, fish, powershell, zsh.",
+            )
+        })
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if writing the completion script fails.
+    pub fn generate(&self, buf: &mut dyn std::io::Write) -> Result<()> {
+        let shell = self.shell()?;
+        let mut command = Cli::command();
+        command.set_bin_name("jj-vine");
+        command.build();
+
+        match clap_complete::Generator::try_generate(&shell, &command, buf) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
 }
 
 #[expect(clippy::module_name_repetitions, reason = "it's fine")]
@@ -62,7 +100,7 @@ impl Cli {
     pub async fn run_stdout(&self) -> Result<()> {
         let can_have_interactive_output = match self.command {
             Commands::Submit(_) | Commands::Status(_) => true,
-            Commands::Init => false,
+            Commands::Init | Commands::Completions(_) => false,
         };
 
         let output: SyncOutput = if self.verbose || !can_have_interactive_output {
@@ -146,6 +184,49 @@ impl Cli {
                 crate::commands::status::status(options, &main_config).await?;
                 Ok(())
             }
+            Commands::Completions(options) => {
+                options.generate(&mut std::io::stdout().lock())?;
+                Ok(())
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::ValueEnum as _;
+
+    use super::*;
+
+    #[test]
+    fn completions_generate_for_every_shell() {
+        for shell in Shell::value_variants() {
+            let cli = Cli::try_parse_from(["jj-vine", "completions", &shell.to_string()])
+                .expect("completions should parse");
+            let Commands::Completions(options) = &cli.command else {
+                panic!("expected completions command");
+            };
+            assert_eq!(options.shell().expect("shell is explicit"), *shell);
+
+            let mut output = Vec::new();
+            options.generate(&mut output).expect("stdout is infallible");
+
+            let output = String::from_utf8(output).expect("completion script is UTF-8");
+            assert!(
+                output.contains("jj-vine") || output.contains("jj_vine"),
+                "{shell} completions should reference the binary"
+            );
+        }
+    }
+
+    #[test]
+    fn completions_parses_without_a_shell() {
+        let cli = Cli::try_parse_from(["jj-vine", "completions"])
+            .expect("completions should parse without a shell");
+        let Commands::Completions(options) = &cli.command else {
+            panic!("expected completions command");
+        };
+
+        assert_eq!(options.shell, None);
     }
 }

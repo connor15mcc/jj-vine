@@ -23,6 +23,7 @@ disabled-strategies = ["compile"]
 [dependencies]
 bon = "3.9.3"
 clap = { version = "4.6.3", features = ["derive"] }
+clap_complete = "4.6.9"
 cli-table = "0.5.0"
 dialoguer = "0.12.0"
 distill-strip-ansi = { version = "0.6.1", default-features = false, features = [
