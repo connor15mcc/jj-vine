@@ -518,6 +518,8 @@ impl Jujutsu {
             "-r",
             revset.as_ref(),
             "--no-graph",
+            "--config",
+            "ui.log-word-wrap=false",
             "--template",
             &template,
         ])?;

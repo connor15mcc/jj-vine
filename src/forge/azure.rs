@@ -100,9 +100,9 @@ pub fn validate_config(config: &Config) -> Result<()> {
         }
         .fail();
     }
-    if config.azure.token.is_empty() {
+    if !config.azure.has_token() {
         return ConfigSnafu {
-            message: "azure.token is required when forge is azure".to_owned(),
+            message: "azure.token or azure.tokenCommand is required when forge is azure".to_owned(),
         }
         .fail();
     }
@@ -125,7 +125,7 @@ impl AzureDevOpsForge {
             .vssps_base_url(config.azure.vssps_host.clone())
             .source_project_id(config.azure.source_project_id())
             .target_project_id(config.azure.target_project_id())
-            .token(config.azure.token.clone())
+            .token(config.azure.token()?)
             .maybe_source_repository_name(config.azure.source_repository_name.clone())
             .maybe_target_repository_name(
                 config.azure.target_repository_name().map(ToOwned::to_owned),

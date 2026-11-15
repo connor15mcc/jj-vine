@@ -341,9 +341,10 @@ pub fn validate_config(config: &Config) -> Result<()> {
         .build());
     }
 
-    if config.github.token.is_empty() {
+    if !config.github.has_token() {
         return Err(ConfigSnafu {
-            message: "github.token is required when forge is github".to_owned(),
+            message: "github.token or github.tokenCommand is required when forge is github"
+                .to_owned(),
         }
         .build());
     }
@@ -359,7 +360,7 @@ impl GitHubForge {
             config.github.host.clone(),
             source.to_owned(),
             target.to_owned(),
-            config.github.token.clone(),
+            config.github.token()?,
             config.ca_bundle.clone(),
             config.tls_accept_non_compliant_certs,
         )

@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
-use dialoguer::{Input, Password};
+use dialoguer::Input;
 use owo_colors::OwoColorize as _;
 
 use crate::{
-    commands::init::{Remotes, get_config, set_config},
+    commands::init::{Remotes, apply_token_source, get_config, prompt_token, set_config},
     error::Result,
 };
 
@@ -15,7 +15,6 @@ pub fn init(repo_path: impl Into<PathBuf>, remotes: Option<&Remotes>) -> Result<
     let existing_host = get_config(&repo_path, "jj-vine.forgejo.host");
     let existing_project = get_config(&repo_path, "jj-vine.forgejo.project");
     let existing_target_project = get_config(&repo_path, "jj-vine.forgejo.targetProject");
-    let existing_token = get_config(&repo_path, "jj-vine.forgejo.token");
 
     let remotes = remotes.as_ref();
     let forge = match remotes {
@@ -74,34 +73,27 @@ pub fn init(repo_path: impl Into<PathBuf>, remotes: Option<&Remotes>) -> Result<
         )
         .interact_text()?;
 
-    let forgejo_token = if let Some(token) = existing_token {
-        println!(
-            "Using existing Personal Access Token. Run `jj config set --repo jj-vine.forgejo.token <token>` to update it."
-        );
-        token
-    } else {
-        println!();
-        println!("{}", "Personal Access Token required scopes:".yellow());
-        println!(
-            "  {} {}",
-            "•".yellow(),
-            "repo (for creating/updating pull requests)".dimmed()
-        );
-        println!();
-        println!(
-            "  {}",
-            format!("Create token at: {forgejo_host}/user/settings/applications").dimmed(),
-        );
-        println!();
-
-        Password::new()
-            .with_prompt(format!(
-                "{} {}",
-                "Forgejo/Codeburg/Gitea Personal Access Token".bold(),
-                "jj-vine.forgejo.token".dimmed()
-            ))
-            .interact()?
-    };
+    let forgejo_token = prompt_token(
+        &repo_path,
+        "jj-vine.forgejo",
+        "Forgejo/Codeberg/Gitea",
+        None,
+        || {
+            println!();
+            println!("{}", "Personal Access Token required scopes:".yellow());
+            println!(
+                "  {} {}",
+                "•".yellow(),
+                "repo (for creating/updating pull requests)".dimmed()
+            );
+            println!();
+            println!(
+                "  {}",
+                format!("Create token at: {forgejo_host}/user/settings/applications").dimmed(),
+            );
+            println!();
+        },
+    )?;
 
     set_config(&repo_path, "jj-vine.forgejo.host", &forgejo_host)?;
     set_config(&repo_path, "jj-vine.forgejo.project", &forgejo_project)?;
@@ -110,7 +102,7 @@ pub fn init(repo_path: impl Into<PathBuf>, remotes: Option<&Remotes>) -> Result<
         "jj-vine.forgejo.targetProject",
         &forgejo_target_project,
     )?;
-    set_config(&repo_path, "jj-vine.forgejo.token", &forgejo_token)?;
+    apply_token_source(&repo_path, "jj-vine.forgejo", forgejo_token)?;
 
     Ok(())
 }

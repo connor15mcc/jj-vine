@@ -1,22 +1,27 @@
 use std::path::PathBuf;
 
-use dialoguer::{Input, Password};
+use dialoguer::Input;
 use owo_colors::OwoColorize as _;
 
 use crate::{
-    commands::init::{Remotes, get_config, parse_forge_url, set_config},
+    commands::init::{
+        Remotes,
+        apply_token_source,
+        get_config,
+        parse_forge_url,
+        prompt_token,
+        set_config,
+    },
     error::Result,
 };
 
 /// Initialize GitLab-specific configuration.
 #[expect(clippy::single_call_fn, reason = "important")]
-#[expect(clippy::too_many_lines, reason = "important")]
 pub fn init(repo_path: impl Into<PathBuf>, remotes: Option<&Remotes>) -> Result<()> {
     let repo_path = repo_path.into();
     let existing_host = get_config(&repo_path, "jj-vine.gitlab.host");
     let existing_project = get_config(&repo_path, "jj-vine.gitlab.project");
     let existing_target_project = get_config(&repo_path, "jj-vine.gitlab.targetProject");
-    let existing_token = get_config(&repo_path, "jj-vine.gitlab.token");
 
     let remotes = remotes.as_ref();
     let source_forge = remotes.and_then(|r| parse_forge_url(&r.origin));
@@ -84,12 +89,7 @@ pub fn init(repo_path: impl Into<PathBuf>, remotes: Option<&Remotes>) -> Result<
         )
         .interact_text()?;
 
-    let gitlab_token = if let Some(token) = existing_token {
-        println!(
-            "Using existing Personal Access Token. Run `jj config set --repo jj-vine.gitlab.token <token>` to update it."
-        );
-        token
-    } else {
+    let gitlab_token = prompt_token(&repo_path, "jj-vine.gitlab", "GitLab", None, || {
         println!();
         println!("{}", "Personal Access Token required scopes:".yellow());
         println!(
@@ -113,15 +113,7 @@ pub fn init(repo_path: impl Into<PathBuf>, remotes: Option<&Remotes>) -> Result<
                 .dimmed()
         );
         println!();
-
-        Password::new()
-            .with_prompt(format!(
-                "{} {}",
-                "GitLab Personal Access Token".bold(),
-                "jj-vine.gitlab.token".dimmed()
-            ))
-            .interact()?
-    };
+    })?;
 
     set_config(&repo_path, "jj-vine.gitlab.host", &gitlab_host)?;
     set_config(&repo_path, "jj-vine.gitlab.project", &gitlab_project)?;
@@ -130,7 +122,7 @@ pub fn init(repo_path: impl Into<PathBuf>, remotes: Option<&Remotes>) -> Result<
         "jj-vine.gitlab.targetProject",
         &gitlab_target_project,
     )?;
-    set_config(&repo_path, "jj-vine.gitlab.token", &gitlab_token)?;
+    apply_token_source(&repo_path, "jj-vine.gitlab", gitlab_token)?;
 
     Ok(())
 }

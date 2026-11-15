@@ -310,6 +310,14 @@ jj config set --repo jj-vine.defaultReviewers '["alice", "bob"]'
 
 All listed settings are under the `jj-vine` section so should be prefixed with `jj-vine.`.
 
+*Required means that either the `token` or `tokenCommand` setting must be present. For example, to avoid storing a GitHub token directly, use `gh`'s credential store:
+
+```bash
+jj config set --repo jj-vine.github.tokenCommand '["gh", "auth", "token"]'
+```
+
+`tokenCommand` must be an array of arguments. It is run each time jj-vine needs a token, and its stdout (trimmed) is used. Arguments are passed directly without a shell, so if you need shell features use an explicit shell, for example `["sh", "-c", "pass show github | head -n1"]`.
+
 #### Forge{#forge}
 
 Ad a minimum, the `jj-vine.forge` configuration setting must be set to the type of forge you are using.
@@ -326,7 +334,8 @@ Required when `jj-vine.forge` is set to `gitlab`.
 |---------|-------------|------|----------|---------|
 | `gitlab.host` | GitLab instance URL (e.g., `https://gitlab.example.com`) | String | Yes | - |
 | `gitlab.project` | Project ID where branches are pushed (`group/project` or numeric ID like `12345`) | String | Yes | - |
-| `gitlab.token` | Personal Access Token with `api` scope | String | Yes | - |
+| `gitlab.token` | Personal Access Token with `api` scope. Not needed if `gitlab.tokenCommand` is set. | String | Yes* | - |
+| `gitlab.tokenCommand` | Command that prints a Personal Access Token to stdout, as an array of arguments passed without a shell. Takes precedence over `gitlab.token`. | String[] | Yes* | - |
 | `gitlab.targetProject` | Target project ID for merge requests (e.g., `upstream/project`). Use if you are using a fork. | String | No | (same as `gitlab.project`) |
 | `gitlab.createMergeRequestDependencies` | Whether to create dependencies between merge requests, requiring that all parent merge requests are merged before the child merge request can be merged. Note that this is **only available in [GitLab Premium 17.5 or higher](https://codeberg.org/abrenneke/jj-vine/issues/15#issuecomment-13561556)! | Boolean | No | true |
 
@@ -338,7 +347,8 @@ Required when `jj-vine.forge` is set to `github`.
 |---------|-------------|------|----------|---------|
 | `github.host` | GitHub API URL (defaults to `https://api.github.com` for GitHub.com, or `https://github.example.com/api/v3` for Enterprise) | String | Yes | - |
 | `github.project` | Repository where branches are pushed in `owner/repo` format | String | Yes | - |
-| `github.token` | Personal access token. Classic PATs need the `repo` scope. Fine-grained PATs need **Contents: Read and Write** and **Pull requests: Read and Write**. Repos in an organization also need **Members: Read**. | String | Yes | - |
+| `github.token` | Personal access token. Classic PATs need the `repo` scope. Fine-grained PATs need **Contents: Read and Write** and **Pull requests: Read and Write**. Repos in an organization also need **Members: Read**. Not needed if `github.tokenCommand` is set. | String | Yes* | - |
+| `github.tokenCommand` | Command that prints a GitHub token to stdout, as an array of arguments passed without a shell. Takes precedence over `github.token`, so you can use `["gh", "auth", "token"]` and avoid storing a token in config. | String[] | Yes* | - |
 | `github.targetProject` | Target repository for pull requests (e.g., `upstream-owner/repo`). Use if you are using a fork. | String | No | (same as `github.project`) |
 
 #### Forgejo/Codeberg/Gitea{#forgejo-codeberg-gitea}
@@ -349,7 +359,8 @@ Required when `jj-vine.forge` is set to `forgejo`.
 |---------|-------------|------|----------|---------|
 | `forgejo.host` | Forgejo/Codeberg/Gitea instance URL (e.g., `https://codeberg.org`) | String | Yes | - |
 | `forgejo.project` | Repository where branches are pushed in `owner/repo` format | String | Yes | - |
-| `forgejo.token` | API access token with `repo` scope | String | Yes | - |
+| `forgejo.token` | API access token with `repo` scope. Not needed if `forgejo.tokenCommand` is set. | String | Yes* | - |
+| `forgejo.tokenCommand` | Command that prints an API access token to stdout, as an array of arguments passed without a shell. Takes precedence over `forgejo.token`. | String[] | Yes* | - |
 | `forgejo.targetProject` | Target repository for pull requests (e.g., `upstream-owner/repo`). Use if you are using a fork. | String | No | (same as `forgejo.project`) |
 | `forgejo.wipPrefix` | Prefix for WIP/draft pull requests. What counts as a draft pull request is configurable per-repository on Forgejo. | String | No | "WIP: " |
 
@@ -364,7 +375,8 @@ Required when `jj-vine.forge` is set to `azure`.
 | `azure.project` | Organization and project where branches are pushed, formatted as `organization/project` | String | Yes | - |
 | `azure.sourceRepositoryName` | Name of the repository in the project where branches are pushed | String | Required if `azure.sourceRepositoryId` is not set | - |
 | `azure.sourceRepositoryId` | ID of the repository in the project where branches are pushed | String | Required if `azure.sourceRepositoryName` is not set | - |
-| `azure.token` | Personal Access Token | String | Yes | - |
+| `azure.token` | Personal Access Token. Not needed if `azure.tokenCommand` is set. | String | Yes* | - |
+| `azure.tokenCommand` | Command that prints a Personal Access Token to stdout, as an array of arguments passed without a shell. Takes precedence over `azure.token`. | String[] | Yes* | - |
 | `azure.targetProject` | Target organization & project for pull requests (e.g., `upstream-organization/project`). Use if you are using a fork. | String | No | (same as `azure.project`) |
 | `azure.targetRepositoryName` | Name of the repository in the target project for pull requests | String | Required if `azure.targetRepositoryId` is not set and `azure.targetProject` is different from `azure.project` | - |
 | `azure.targetRepositoryId` | ID of the repository in the target project for pull requests | String | Required if `azure.targetRepositoryName` is not set and `azure.targetProject` is different from `azure.project` | - |
