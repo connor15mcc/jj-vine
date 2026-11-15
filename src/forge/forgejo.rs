@@ -273,9 +273,10 @@ pub fn validate_config(config: &Config) -> Result<()> {
         }
         .build());
     }
-    if config.forgejo.token.is_empty() {
+    if !config.forgejo.has_token() {
         return Err(ConfigSnafu {
-            message: "forgejo.token is required when forge is forgejo".to_owned(),
+            message: "forgejo.token or forgejo.tokenCommand is required when forge is forgejo"
+                .to_owned(),
         }
         .build());
     }
@@ -291,7 +292,7 @@ impl ForgejoForge {
             config.forgejo.host.clone(),
             source.to_owned(),
             target.to_owned(),
-            config.forgejo.token.clone(),
+            config.forgejo.token()?,
             config.ca_bundle.clone(),
             config.tls_accept_non_compliant_certs,
             config.forgejo.wip_prefix.clone(),

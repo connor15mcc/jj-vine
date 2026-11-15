@@ -93,9 +93,10 @@ pub fn validate_config(config: &Config) -> Result<()> {
         validate_gitlab_project_id("gitlab.targetProject", &config.gitlab.target_project)?;
     }
 
-    if config.gitlab.token.is_empty() {
+    if !config.gitlab.has_token() {
         return Err(ConfigSnafu {
-            message: "gitlab.token is required when forge is gitlab".to_owned(),
+            message: "gitlab.token or gitlab.tokenCommand is required when forge is gitlab"
+                .to_owned(),
         }
         .build());
     }
@@ -124,7 +125,7 @@ impl GitLabForge {
             config.gitlab.host.clone(),
             source.to_owned(),
             target.to_owned(),
-            config.gitlab.token.clone(),
+            config.gitlab.token()?,
             config.ca_bundle.clone(),
             config.tls_accept_non_compliant_certs,
             config.gitlab.create_merge_request_dependencies,

@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, path::PathBuf};
 
-use dialoguer::{Input, Select};
+use dialoguer::{Input, Password, Select};
 use itertools::Itertools as _;
 use owo_colors::OwoColorize as _;
 use serde::Deserialize;
@@ -205,6 +205,123 @@ fn set_config(repo_path: impl Into<PathBuf>, key: &str, value: impl AsRef<str>) 
     Ok(())
 }
 
+fn unset_config(repo_path: impl Into<PathBuf>, key: &str) -> Result<()> {
+    Jujutsu::new(repo_path)?.exec(["config", "unset", "--repo", key])?;
+    Ok(())
+}
+
+/// How the user wants to provide an authentication token.
+enum TokenSource {
+    /// Reuse whatever is already configured, without rewriting it.
+    Existing,
+
+    /// Run this shell command and use its stdout as the token. Stored as an
+    /// explicit `tokenCommand` argv array.
+    Command(String),
+
+    /// Store this token directly.
+    Literal(String),
+}
+
+/// Prompt for an authentication token or a command that prints one.
+///
+/// Existing configuration is reused. If `default_command` is provided (for
+/// example `gh auth token`), it is offered as the default so tokens do not
+/// have to be stored in the config.
+fn prompt_token(
+    repo_path: &PathBuf,
+    config_prefix: &str,
+    display_name: &str,
+    default_command: Option<&str>,
+    hint: impl Fn(),
+) -> Result<TokenSource> {
+    let token_key = format!("{config_prefix}.token");
+    let command_key = format!("{config_prefix}.tokenCommand");
+
+    let existing_token = get_config(repo_path, &token_key);
+    let existing_command = get_config(repo_path, &command_key);
+
+    if existing_command.is_some() {
+        println!(
+            "Using existing token command ({}). Run `jj config set --repo {} '[\"<program>\", \"<arg>\"]'` to update it.",
+            command_key.dimmed(),
+            command_key
+        );
+        return Ok(TokenSource::Existing);
+    }
+
+    if let Some(token) = existing_token {
+        println!(
+            "Using existing Personal Access Token. Run `jj config set --repo {token_key} <token>` to update it."
+        );
+        return Ok(TokenSource::Literal(token));
+    }
+
+    hint();
+
+    let command = Input::<String>::new()
+        .with_prompt(format!(
+            "{} {}",
+            format!(
+                "Shell command that prints the {display_name} token, run with `sh -c` (leave blank to enter a token directly)"
+            )
+            .bold(),
+            command_key.dimmed()
+        ))
+        .with_initial_text(default_command.unwrap_or_default())
+        .allow_empty(true)
+        .interact_text()?;
+
+    if !command.trim().is_empty() {
+        return Ok(TokenSource::Command(command.trim().to_owned()));
+    }
+
+    let token = Password::new()
+        .with_prompt(format!(
+            "{} {}",
+            format!("{display_name} Personal Access Token").bold(),
+            token_key.dimmed()
+        ))
+        .interact()?;
+
+    Ok(TokenSource::Literal(token))
+}
+
+fn apply_token_source(repo_path: &PathBuf, config_prefix: &str, source: TokenSource) -> Result<()> {
+    let token_key = format!("{config_prefix}.token");
+    let command_key = format!("{config_prefix}.tokenCommand");
+
+    match source {
+        TokenSource::Existing => {}
+        TokenSource::Command(command) => {
+            let argv = token_command_toml(&command);
+            set_config(repo_path, &command_key, &argv)?;
+            if get_config(repo_path, &token_key).is_some() {
+                unset_config(repo_path, &token_key)?;
+            }
+        }
+        TokenSource::Literal(token) => {
+            set_config(repo_path, &token_key, &token)?;
+            if get_config(repo_path, &command_key).is_some() {
+                unset_config(repo_path, &command_key)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn token_command_toml(command: &str) -> String {
+    let shell = if cfg!(windows) { "cmd" } else { "sh" };
+    let shell_flag = if cfg!(windows) { "/C" } else { "-c" };
+    toml::Value::Array(vec![
+        toml::Value::String(shell.to_owned()),
+        toml::Value::String(shell_flag.to_owned()),
+        toml::Value::String(command.to_owned()),
+    ])
+    .to_string()
+}
+
 #[expect(clippy::single_call_fn, reason = "seems fine")]
 fn detect_remotes(jj: &Jujutsu) -> Result<Option<Remotes>> {
     let output = jj.exec(["git", "remote", "list"])?;
@@ -347,6 +464,22 @@ fn parse_forge_url(url: &str) -> Option<DetectedForge> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn token_command_toml_round_trips_through_parser() {
+        let command = if cfg!(windows) {
+            r#"echo a\"b"#
+        } else {
+            r#"printf 'a"b\n'"#
+        };
+        let rendered = token_command_toml(command);
+        let value: toml::Value = toml::from_str(&format!("command = {rendered}")).unwrap();
+        let command: crate::config::TokenCommand =
+            value.get("command").cloned().unwrap().try_into().unwrap();
+
+        assert!(!command.is_empty());
+        assert_eq!(command.run().unwrap(), "a\"b");
+    }
 
     #[test]
     fn parse_gitlab_url_ssh() {

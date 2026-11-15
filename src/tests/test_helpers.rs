@@ -277,6 +277,7 @@ impl TestRepo<ForgejoForge> {
                     target_project: project.clone(),
                     project: project.clone(),
                     token: token.clone(),
+                    token_command: None,
                     ..Default::default()
                 })
                 .build(),

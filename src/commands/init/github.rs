@@ -1,10 +1,17 @@
 use std::path::PathBuf;
 
-use dialoguer::{Input, Password};
+use dialoguer::Input;
 use owo_colors::OwoColorize as _;
 
 use crate::{
-    commands::init::{Remotes, get_config, parse_forge_url, set_config},
+    commands::init::{
+        Remotes,
+        apply_token_source,
+        get_config,
+        parse_forge_url,
+        prompt_token,
+        set_config,
+    },
     error::Result,
 };
 
@@ -19,7 +26,6 @@ pub fn init(repo_path: impl Into<PathBuf>, remotes: Option<&Remotes>) -> Result<
     let existing_host = get_config(&repo_path, "jj-vine.github.host");
     let existing_project = get_config(&repo_path, "jj-vine.github.project");
     let existing_target_project = get_config(&repo_path, "jj-vine.github.targetProject");
-    let existing_token = get_config(&repo_path, "jj-vine.github.token");
 
     let remotes = remotes.as_ref();
     let forge = match remotes {
@@ -84,42 +90,36 @@ pub fn init(repo_path: impl Into<PathBuf>, remotes: Option<&Remotes>) -> Result<
         .allow_empty(true)
         .interact_text()?;
 
-    let github_token = if let Some(token) = existing_token {
-        println!(
-            "Using existing Personal Access Token. Run `jj config set --repo jj-vine.github.token <token>` to update it."
-        );
-        token
-    } else {
-        println!();
-        println!("{}", "Personal Access Token required scopes:".yellow());
-        println!(
-            "  {} {}",
-            "•".yellow(),
-            "repo (for creating/updating pull requests)".dimmed()
-        );
-        println!();
-        println!(
-            "  {}",
-            format!(
-                "Create token at: {}/settings/tokens/new",
-                if github_host == "https://api.github.com" {
-                    "https://github.com"
-                } else {
-                    github_host.strip_suffix("/api/v3").unwrap_or(&github_host)
-                }
-            )
-            .dimmed()
-        );
-        println!();
-
-        Password::new()
-            .with_prompt(format!(
-                "{} {}",
-                "GitHub Personal Access Token".bold(),
-                "jj-vine.github.token".dimmed()
-            ))
-            .interact()?
-    };
+    let default_token_command = which::which("gh").is_ok().then_some("gh auth token");
+    let github_token = prompt_token(
+        &repo_path,
+        "jj-vine.github",
+        "GitHub",
+        default_token_command,
+        || {
+            println!();
+            println!("{}", "Personal Access Token required scopes:".yellow());
+            println!(
+                "  {} {}",
+                "•".yellow(),
+                "repo (for creating/updating pull requests)".dimmed()
+            );
+            println!();
+            println!(
+                "  {}",
+                format!(
+                    "Create token at: {}/settings/tokens/new",
+                    if github_host == "https://api.github.com" {
+                        "https://github.com"
+                    } else {
+                        github_host.strip_suffix("/api/v3").unwrap_or(&github_host)
+                    }
+                )
+                .dimmed()
+            );
+            println!();
+        },
+    )?;
 
     set_config(&repo_path, "jj-vine.github.host", &github_host)?;
     set_config(&repo_path, "jj-vine.github.project", &github_project)?;
@@ -130,7 +130,7 @@ pub fn init(repo_path: impl Into<PathBuf>, remotes: Option<&Remotes>) -> Result<
             &github_target_project,
         )?;
     }
-    set_config(&repo_path, "jj-vine.github.token", &github_token)?;
+    apply_token_source(&repo_path, "jj-vine.github", github_token)?;
 
     Ok(())
 }

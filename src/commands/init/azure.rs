@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
-use dialoguer::{Input, Password};
+use dialoguer::Input;
 use owo_colors::OwoColorize as _;
 
 use crate::{
-    commands::init::{Remotes, get_config, set_config},
+    commands::init::{Remotes, apply_token_source, get_config, prompt_token, set_config},
     error::Result,
 };
 
@@ -16,7 +16,6 @@ pub fn init(repo_path: impl Into<PathBuf>, remotes: Option<&Remotes>) -> Result<
     let existing_vssps_host = get_config(&repo_path, "jj-vine.azure.vsspsHost");
     let existing_project = get_config(&repo_path, "jj-vine.azure.project");
     let existing_target_project = get_config(&repo_path, "jj-vine.azure.targetProject");
-    let existing_token = get_config(&repo_path, "jj-vine.azure.token");
     let existing_source_repository_name =
         get_config(&repo_path, "jj-vine.azure.sourceRepositoryName");
     let existing_target_repository_name =
@@ -135,12 +134,7 @@ pub fn init(repo_path: impl Into<PathBuf>, remotes: Option<&Remotes>) -> Result<
         .default(default_target_repository_name)
         .interact_text()?;
 
-    let azure_token = if let Some(token) = existing_token {
-        println!(
-            "Using existing Personal Access Token. Run `jj config set --repo jj-vine.azure.token <token>` to update it."
-        );
-        token
-    } else {
+    let azure_token = prompt_token(&repo_path, "jj-vine.azure", "Azure DevOps", None, || {
         let (org, _project) = azure_project.split_once('/').unwrap();
 
         println!();
@@ -154,15 +148,7 @@ pub fn init(repo_path: impl Into<PathBuf>, remotes: Option<&Remotes>) -> Result<
             .dimmed()
         );
         println!();
-
-        Password::new()
-            .with_prompt(format!(
-                "{} {}",
-                "Azure DevOps Personal Access Token".bold(),
-                "jj-vine.azure.token".dimmed()
-            ))
-            .interact()?
-    };
+    })?;
 
     set_config(&repo_path, "jj-vine.azure.host", &azure_host)?;
     set_config(&repo_path, "jj-vine.azure.vsspsHost", &azure_vssps_host)?;
@@ -182,7 +168,7 @@ pub fn init(repo_path: impl Into<PathBuf>, remotes: Option<&Remotes>) -> Result<
         "jj-vine.azure.targetRepositoryName",
         &azure_target_repository_name,
     )?;
-    set_config(&repo_path, "jj-vine.azure.token", &azure_token)?;
+    apply_token_source(&repo_path, "jj-vine.azure", azure_token)?;
 
     Ok(())
 }

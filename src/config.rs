@@ -1,6 +1,6 @@
 #![expect(clippy::module_name_repetitions, reason = "fine for Config")]
 
-use std::path::PathBuf;
+use std::{path::PathBuf, process::Command};
 
 use bon::Builder;
 use serde::{Deserialize, de::Visitor};
@@ -250,6 +250,131 @@ impl Default for RepoFetchConfig {
     }
 }
 
+/// A command that prints an authentication token to stdout.
+///
+/// Always specified as an array of arguments, for example
+/// `["gh", "auth", "token"]`. The arguments are passed to the program directly
+/// without a shell. If shell features are needed, use an explicit shell such
+/// as `["sh", "-c", "..."]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenCommand(Vec<String>);
+
+impl<'de> Deserialize<'de> for TokenCommand {
+    fn deserialize<D>(deserializer: D) -> core::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct TokenCommandVisitor;
+
+        impl<'de> Visitor<'de> for TokenCommandVisitor {
+            type Value = TokenCommand;
+
+            fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+                formatter
+                    .write_str("an array of arguments, for example [\"gh\", \"auth\", \"token\"]")
+            }
+
+            fn visit_str<E>(self, _v: &str) -> core::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Err(E::custom(
+                    "tokenCommand must be an array of arguments, for example [\"gh\", \"auth\", \"token\"]. To use shell syntax, use [\"sh\", \"-c\", \"...\"]",
+                ))
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> core::result::Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut args = Vec::new();
+                while let Some(arg) = seq.next_element::<String>()? {
+                    args.push(arg);
+                }
+                Ok(TokenCommand(args))
+            }
+        }
+
+        deserializer.deserialize_seq(TokenCommandVisitor)
+    }
+}
+
+impl TokenCommand {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.first().is_none_or(String::is_empty)
+    }
+
+    /// Run the command and return its trimmed stdout.
+    pub fn run(&self) -> Result<String> {
+        let Some((program, args)) = self.0.split_first() else {
+            return ConfigSnafu {
+                message: "tokenCommand must not be empty".to_owned(),
+            }
+            .fail();
+        };
+        if program.is_empty() {
+            return ConfigSnafu {
+                message: "tokenCommand must not be empty".to_owned(),
+            }
+            .fail();
+        }
+
+        let mut command = Command::new(program);
+        command.args(args);
+
+        let output = command.output().map_err(|error| {
+            ConfigSnafu {
+                message: format!("failed to run tokenCommand ({program}): {error}"),
+            }
+            .build()
+        })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return ConfigSnafu {
+                message: format!(
+                    "tokenCommand ({program}) failed with status {}: {}",
+                    output.status,
+                    stderr.trim()
+                ),
+            }
+            .fail();
+        }
+
+        let token = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        if token.is_empty() {
+            return ConfigSnafu {
+                message: format!("tokenCommand ({program}) produced empty output"),
+            }
+            .fail();
+        }
+
+        Ok(token)
+    }
+}
+
+fn resolve_token(forge: &str, token: &str, token_command: Option<&TokenCommand>) -> Result<String> {
+    if let Some(token_command) = token_command
+        && !token_command.is_empty()
+    {
+        return token_command.run();
+    }
+
+    if !token.trim().is_empty() {
+        return Ok(token.trim().to_owned());
+    }
+
+    ConfigSnafu {
+        message: format!("{forge}.token or {forge}.tokenCommand is required"),
+    }
+    .fail()
+}
+
+fn has_token_source(token: &str, token_command: Option<&TokenCommand>) -> bool {
+    !token.trim().is_empty() || token_command.is_some_and(|command| !command.is_empty())
+}
+
 #[derive(Debug, Clone, Deserialize, Builder)]
 #[serde(rename_all = "camelCase")]
 pub struct TitleConfig {
@@ -366,6 +491,11 @@ pub struct GitLabConfig {
     #[serde(default)]
     pub token: String,
 
+    /// Command that prints a GitLab Personal Access Token to stdout.
+    /// Takes precedence over `token`.
+    #[serde(default)]
+    pub token_command: Option<TokenCommand>,
+
     /// If true, jj-vine will create dependencies between pull/merge requests,
     /// requiring that all parent pull/merge requests are merged before the
     /// child pull/merge request can be merged.
@@ -374,6 +504,16 @@ pub struct GitLabConfig {
 }
 
 impl GitLabConfig {
+    /// Resolve the configured token, running `tokenCommand` if set.
+    pub fn token(&self) -> Result<String> {
+        resolve_token("gitlab", &self.token, self.token_command.as_ref())
+    }
+
+    #[must_use]
+    pub fn has_token(&self) -> bool {
+        has_token_source(&self.token, self.token_command.as_ref())
+    }
+
     /// Get the project where MRs target.
     #[must_use]
     pub fn target_project(&self) -> &str {
@@ -416,9 +556,24 @@ pub struct GitHubConfig {
     /// GitHub Personal Access Token.
     #[serde(default)]
     pub token: String,
+
+    /// Command that prints a GitHub token to stdout. Takes precedence over
+    /// `token`. For example, `["gh", "auth", "token"]`.
+    #[serde(default)]
+    pub token_command: Option<TokenCommand>,
 }
 
 impl GitHubConfig {
+    /// Resolve the configured token, running `tokenCommand` if set.
+    pub fn token(&self) -> Result<String> {
+        resolve_token("github", &self.token, self.token_command.as_ref())
+    }
+
+    #[must_use]
+    pub fn has_token(&self) -> bool {
+        has_token_source(&self.token, self.token_command.as_ref())
+    }
+
     /// Get the repository where PRs target.
     #[must_use]
     pub fn target_project(&self) -> &str {
@@ -470,12 +625,27 @@ pub struct ForgejoConfig {
     #[serde(default)]
     pub token: String,
 
+    /// Command that prints an API access token to stdout. Takes precedence
+    /// over `token`.
+    #[serde(default)]
+    pub token_command: Option<TokenCommand>,
+
     /// Prefix for WIP pull/merge requests.
     #[serde(default = "default_wip_prefix")]
     pub wip_prefix: String,
 }
 
 impl ForgejoConfig {
+    /// Resolve the configured token, running `tokenCommand` if set.
+    pub fn token(&self) -> Result<String> {
+        resolve_token("forgejo", &self.token, self.token_command.as_ref())
+    }
+
+    #[must_use]
+    pub fn has_token(&self) -> bool {
+        has_token_source(&self.token, self.token_command.as_ref())
+    }
+
     /// Get the repository where PRs target.
     #[must_use]
     pub fn target_project(&self) -> &str {
@@ -509,6 +679,11 @@ pub struct AzureDevOpsConfig {
     #[serde(default)]
     pub token: String,
 
+    /// Command that prints a Personal Access Token to stdout. Takes precedence
+    /// over `token`.
+    #[serde(default)]
+    pub token_command: Option<TokenCommand>,
+
     #[serde(default)]
     pub source_repository_name: Option<String>,
 
@@ -526,6 +701,16 @@ pub struct AzureDevOpsConfig {
 }
 
 impl AzureDevOpsConfig {
+    /// Resolve the configured token, running `tokenCommand` if set.
+    pub fn token(&self) -> Result<String> {
+        resolve_token("azure", &self.token, self.token_command.as_ref())
+    }
+
+    #[must_use]
+    pub fn has_token(&self) -> bool {
+        has_token_source(&self.token, self.token_command.as_ref())
+    }
+
     #[must_use]
     pub fn source_project_id(&self) -> &str {
         &self.project
@@ -1288,6 +1473,7 @@ mod tests {
             project: "myuser/myrepo".to_owned(),
             target_project: String::new(),
             token: "token".to_owned(),
+            token_command: None,
             create_merge_request_dependencies: true,
         };
 
@@ -1303,6 +1489,7 @@ mod tests {
             project: "myuser/fork".to_owned(),
             target_project: "upstream/repo".to_owned(),
             token: "token".to_owned(),
+            token_command: None,
             create_merge_request_dependencies: true,
         };
 
@@ -1318,6 +1505,7 @@ mod tests {
             project: "myuser/repo".to_owned(),
             target_project: "myuser/repo".to_owned(),
             token: "token".to_owned(),
+            token_command: None,
             create_merge_request_dependencies: true,
         };
 
@@ -1335,6 +1523,7 @@ mod tests {
                 project: "git@gitlab.com:myuser/repo.git".to_owned(),
                 target_project: String::new(),
                 token: "token".to_owned(),
+                token_command: None,
                 create_merge_request_dependencies: true,
             })
             .build();
@@ -1353,6 +1542,7 @@ mod tests {
                 project: "myuser/fork".to_owned(),
                 target_project: "https://gitlab.com/upstream/repo.git".to_owned(),
                 token: "token".to_owned(),
+                token_command: None,
                 create_merge_request_dependencies: true,
             })
             .build();
@@ -1369,10 +1559,148 @@ mod tests {
             project: "myuser/myrepo".to_owned(),
             target_project: String::new(),
             token: "token".to_owned(),
+            token_command: None,
         };
 
         assert_eq!(config.target_project(), "myuser/myrepo");
         assert_eq!(config.source_project(), "myuser/myrepo");
         assert!(!config.is_fork_workflow());
+    }
+
+    #[test]
+    fn token_command_deserializes_from_array() {
+        let args: TokenCommand = toml::Value::Array(vec![
+            toml::Value::String("gh".to_owned()),
+            toml::Value::String("auth".to_owned()),
+            toml::Value::String("token".to_owned()),
+        ])
+        .try_into()
+        .unwrap();
+        assert_eq!(
+            args,
+            TokenCommand(vec!["gh".to_owned(), "auth".to_owned(), "token".to_owned()])
+        );
+    }
+
+    #[test]
+    fn token_command_rejects_string() {
+        let result: core::result::Result<TokenCommand, _> =
+            toml::Value::String("gh auth token".to_owned()).try_into();
+
+        let error = result
+            .expect_err("a bare string should not be accepted as tokenCommand")
+            .to_string();
+        assert!(
+            error.contains("must be an array of arguments"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn token_command_runs_and_trims_stdout() {
+        let command = if cfg!(windows) {
+            TokenCommand(vec![
+                "cmd".to_owned(),
+                "/C".to_owned(),
+                "echo token-from-command".to_owned(),
+            ])
+        } else {
+            TokenCommand(vec![
+                "printf".to_owned(),
+                "token-from-command\\n".to_owned(),
+            ])
+        };
+
+        assert_eq!(command.run().unwrap(), "token-from-command");
+    }
+
+    #[test]
+    fn token_command_takes_precedence_over_literal_token() {
+        let config = GitHubConfig {
+            host: "https://api.github.com".to_owned(),
+            project: "myuser/myrepo".to_owned(),
+            target_project: String::new(),
+            token: "literal-token".to_owned(),
+            token_command: Some(TokenCommand(vec![
+                if cfg!(windows) { "cmd" } else { "printf" }.to_owned(),
+                if cfg!(windows) {
+                    "/C echo command-token".to_owned()
+                } else {
+                    "command-token".to_owned()
+                },
+            ])),
+        };
+
+        assert_eq!(config.token().unwrap(), "command-token");
+    }
+
+    #[test]
+    fn token_falls_back_to_literal_value() {
+        let config = GitHubConfig {
+            host: "https://api.github.com".to_owned(),
+            project: "myuser/myrepo".to_owned(),
+            target_project: String::new(),
+            token: "literal-token".to_owned(),
+            token_command: None,
+        };
+
+        assert_eq!(config.token().unwrap(), "literal-token");
+    }
+
+    #[test]
+    fn token_command_failure_is_reported() {
+        let command = if cfg!(windows) {
+            TokenCommand(vec!["cmd".to_owned(), "/C".to_owned(), "exit 1".to_owned()])
+        } else {
+            TokenCommand(vec!["false".to_owned()])
+        };
+
+        let error = command.run().unwrap_err().to_string();
+        assert!(
+            error.contains("tokenCommand") && error.contains("failed with status"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn github_config_deserializes_token_command() {
+        let config: GitHubConfig = toml::from_str(
+            r#"
+host = "https://api.github.com"
+project = "myuser/myrepo"
+tokenCommand = ["gh", "auth", "token"]
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.token_command,
+            Some(TokenCommand(vec![
+                "gh".to_owned(),
+                "auth".to_owned(),
+                "token".to_owned()
+            ]))
+        );
+        assert!(config.has_token());
+    }
+
+    #[test]
+    fn validate_accepts_token_command_without_token() {
+        let config = Config::builder()
+            .forge(ForgeType::GitHub)
+            .github(GitHubConfig {
+                host: "https://api.github.com".to_owned(),
+                project: "myuser/myrepo".to_owned(),
+                target_project: String::new(),
+                token: String::new(),
+                token_command: Some(TokenCommand(vec![
+                    "gh".to_owned(),
+                    "auth".to_owned(),
+                    "token".to_owned(),
+                ])),
+            })
+            .build();
+
+        config.validate().unwrap();
     }
 }
